@@ -4,12 +4,17 @@ pragma solidity ^0.8.11;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
 import "./interfaces/IERC20MintBurn.sol";
 import "./interfaces/IJamonVesting.sol";
+
+interface IJamonShareVault {
+    function totalStaked() external returns (uint256);
+}
 
 /**
  * @title JamonVesting
@@ -18,16 +23,17 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     //---------- Libraries ----------//
     using SafeMath for uint256;
     using SafeERC20 for IERC20MintBurn;
+    using Counters for Counters.Counter;
 
     //---------- Contracts ----------//
     IERC20MintBurn private immutable jamonV2;
+    IJamonShareVault private JamonShareVault;
     address private bonus;
-    address private JamonShareVault;
 
     //---------- Variables ----------//
     uint256 private vestingSchedulesTotalAmount;
     uint256 private constant month = 2629743; // 1 Month Timestamp
-    uint256 private deposits;
+    Counters.Counter private deposits;
     uint256 public lastDeposit;
 
     //---------- Storage -----------//
@@ -57,13 +63,17 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     constructor(address jamonv2_) {
         require(jamonv2_ != address(0x0));
         jamonV2 = IERC20MintBurn(jamonv2_);
+        lastDeposit = block.timestamp;
     }
 
     function initialize(address bonus_, address jsVault_) external onlyOwner {
         require(bonus == address(0x0), "Already initialized");
-        require(bonus_ != address(0x0) && jsVault_ != address(0x0), "Invalid address");
+        require(
+            bonus_ != address(0x0) && jsVault_ != address(0x0),
+            "Invalid address"
+        );
         bonus = bonus_;
-        JamonShareVault = jsVault_;    
+        JamonShareVault = IJamonShareVault(jsVault_);
     }
 
     //---------- Modifiers ----------//
@@ -116,6 +126,14 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     }
 
     //----------- External Functions -----------//
+    /**
+     * @dev Returns the number of deposits sended to Jamon Share Vault.
+     * @return the number of deposits to JamonShareVault
+     */
+    function depositsCount() external view returns (uint256) {
+        return deposits.current();
+    }
+
     /**
      * @dev Returns the number of vesting schedules associated to a beneficiary.
      * @return the number of vesting schedules
@@ -179,10 +197,12 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
      * @param _beneficiary address of the beneficiary to whom vested tokens are transferred
      * @param _amount total amount of tokens to be released at the end of the vesting
      */
-    function createVestingSchedule(
-        address _beneficiary,
-        uint256 _amount
-    ) public override whenNotPaused onlyBonus {
+    function createVestingSchedule(address _beneficiary, uint256 _amount)
+        public
+        override
+        whenNotPaused
+        onlyBonus
+    {
         require(_amount > 0, "JamonVesting: amount must be > 0");
         bytes32 vestingScheduleId = this.computeNextVestingScheduleIdForHolder(
             _beneficiary
@@ -311,12 +331,16 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
         uint256 index
     ) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(holder, index));
-    }    
+    }
 
-    function depositToVault(uint256 totalStaked_) external onlyOwner {
-        require(totalStaked_ > 0);
-        uint256 toVault = totalStaked_.mul(50);
-        jamonV2.mint(JamonShareVault, toVault);
+    function depositToVault() external nonReentrant whenNotPaused {
+        require(lastDeposit.add(month) < block.timestamp);
+        require(deposits.current() < 12);
+        lastDeposit = block.timestamp;
+        deposits.increment();
+        uint256 totalStaked = JamonShareVault.totalStaked();
+        uint256 toVault = totalStaked.mul(50);
+        jamonV2.mint(address(JamonShareVault), toVault);
     }
 
     function pause() external onlyOwner {
