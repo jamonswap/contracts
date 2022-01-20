@@ -130,7 +130,7 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
      * @dev Returns the number of deposits sended to Jamon Share Vault.
      * @return the number of deposits to JamonShareVault
      */
-    function depositsCount() external view returns (uint256) {
+    function depositsCount() external view override returns (uint256) {
         return deposits.current();
     }
 

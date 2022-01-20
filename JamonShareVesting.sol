@@ -18,11 +18,11 @@ contract JamonShareVesting is IJamonShareVesting, ReentrancyGuard, Pausable, Own
 
     //---------- Contracts ----------//
     IERC20MintBurn internal JamonShare;
+    IJamonVesting internal JamonVesting;
 
     //---------- Variables ----------//
     address private Presale;
     uint256 constant month = 2629743; // 1 Month Timestamp 2629743
-    bool public ShareUnlock;
 
     //---------- Storage -----------//
 
@@ -43,9 +43,10 @@ contract JamonShareVesting is IJamonShareVesting, ReentrancyGuard, Pausable, Own
         JamonShare = IERC20MintBurn(jamonShare_);
     }
 
-    function initialize(address presale_) external onlyOwner {
+    function initialize(address presale_, address jamonVesting_) external onlyOwner {
         require(Presale == address(0x0), "Already initialized");
         Presale = presale_;
+        JamonVesting = IJamonVesting(jamonVesting_);
     }
     //---------- Modifiers ----------//
     modifier onlyPresale {
@@ -65,16 +66,12 @@ contract JamonShareVesting is IJamonShareVesting, ReentrancyGuard, Pausable, Own
     }
 
     function claimShare() external nonReentrant {  
-        require(ShareUnlock, "Shares lockeds");
+        require(JamonVesting.depositsCount() == 12, "Shares lockeds");
         uint256 amount = SHARE_VESTING[_msgSender()];
         require(amount > 0, "Zero amount");
         delete SHARE_VESTING[_msgSender()];
         JamonShare.mint(_msgSender(), amount);
         emit Released(_msgSender(), amount);
-    }
-
-    function unlockShares() external onlyOwner {
-        ShareUnlock = true;
     }
 
     function pause() external onlyOwner {
