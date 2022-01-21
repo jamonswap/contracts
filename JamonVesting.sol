@@ -18,6 +18,7 @@ interface IJamonShareVault {
 
 /**
  * @title JamonVesting
+ * @notice Lock JamonV2 token rewards for 12 months.
  */
 contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     //---------- Libraries ----------//
@@ -26,15 +27,15 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     using Counters for Counters.Counter;
 
     //---------- Contracts ----------//
-    IERC20MintBurn private immutable jamonV2;
-    IJamonShareVault private JamonShareVault;
-    address private bonus;
+    IERC20MintBurn private immutable jamonV2; // JamonV2 ERC20 contract
+    IJamonShareVault private JamonShareVault; // JamonShare ERC20 contract
+    address private bonus; // Address of Bonus contract
 
     //---------- Variables ----------//
-    uint256 private vestingSchedulesTotalAmount;
+    uint256 private vestingSchedulesTotalAmount; // Total JamonV2 token vested
     uint256 private constant month = 2629743; // 1 Month Timestamp
-    Counters.Counter private deposits;
-    uint256 public lastDeposit;
+    Counters.Counter private deposits; // Counter for a control of deposits, max 12 deposits one per month.
+    uint256 public lastDeposit; // Last deposit in timestamp
 
     //---------- Storage -----------//
     struct VestingSchedule {
@@ -343,6 +344,9 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
         jamonV2.mint(address(JamonShareVault), toVault);
     }
 
+    /**
+     * @notice Functions for pause and unpause the contract.
+     */
     function pause() external onlyOwner {
         _pause();
     }
