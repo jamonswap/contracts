@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/governance/Governor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
@@ -18,7 +18,7 @@ contract JamonGovernor is Governor, GovernorSettings, GovernorCountingSimple, Go
 
     constructor(ERC20Votes _token)
         Governor("JamonGovernor")
-        GovernorSettings(1 /* 1 block */, 274909 /* 1 week */, 0)
+        GovernorSettings(1, 274909, 1000e18)
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(4)
     {        
@@ -29,7 +29,7 @@ contract JamonGovernor is Governor, GovernorSettings, GovernorCountingSimple, Go
     // The following functions are overrides required by Solidity.
 
     /**
-     * @dev Delay, in number of block, between the proposal is created and the vote starts. This can be increassed to
+     * @dev Delay, in number of block, between the proposal is created and the vote starts. This can be increased to
      * leave time for users to buy voting power, of delegate it, before the voting of a proposal starts.
      */
     function votingDelay()

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
@@ -40,6 +40,7 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
     EnumerableSet.AddressSet private PriceFeeds;
     address private Governor;
     address private JamonShareVault;
+    address private USDC;
 
     //---------- Storage -----------//
     struct BonusInput {
@@ -64,7 +65,7 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
     }
 
     mapping(bytes32 => Proposal) internal BONUS;
-    mapping(address => Feed) internal FEEDS;
+    mapping(address => Feed) public FEEDS;
 
     //---------- Events -----------//
     event Contributed(
@@ -75,29 +76,42 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
         uint256 reward
     );
 
+    event NewBonus(address indexed lp, bytes32 id);
+
     //---------- Constructor ----------//
     constructor(
         address jamonV2_,
         address jamonUSDClp_,
         address vesting_,
         address governor_,
-        address jamonShareVault_
+        address jamonShareVault_,
+        address usdc_
     ) {
+        require(
+            jamonV2_ != address(0x0) &&
+                jamonUSDClp_ != address(0x0) &&
+                vesting_ != address(0x0) &&
+                governor_ != address(0x0) &&
+                jamonShareVault_ != address(0x0) &&
+                usdc_ != address(0x0),
+            "Invalid address"
+        );
         Jamon_V2 = IERC20MintBurn(jamonV2_);
         Router = IJamonRouter(0xdBe30E8742fBc44499EB31A19814429CECeFFaA0);
         JamonUSDCV2LP = IJamonPair(jamonUSDClp_);
         Vesting = IJamonVesting(vesting_);
         Governor = governor_;
         JamonShareVault = jamonShareVault_;
+        USDC = usdc_;
         /**
-         * Network: Mumbai
+         * Network: Polygon
          ------------------------------
          * Aggregator: MATIC/USD
-         * Address: 0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada
+         * Address: 0xAB594600376Ec9fD91F8e885dADF0CE036862dE0
          */
-        FEEDS[Router.WETH()].proxy = 0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada;
+        FEEDS[Router.WETH()].proxy = 0xAB594600376Ec9fD91F8e885dADF0CE036862dE0;
         FEEDS[Router.WETH()].decimals = 8;
-        PriceFeeds.add(Router.WETH());
+        require(PriceFeeds.add(address(Router.WETH())), "Add feed error");
     }
 
     //----------- Internal Functions -----------//
@@ -116,8 +130,11 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
             (, int256 price, , , ) = AggregatorV3Interface(FEEDS[token_].proxy)
                 .latestRoundData();
             uint256 decimals = FEEDS[token_].decimals;
-            decimals = uint256(18).sub(decimals);
-            return uint256(price).mul(10**decimals);
+            decimals = decimals < 18 ? uint256(18).sub(decimals) : decimals;
+            if (decimals != 18) {
+                return uint256(price).mul(10**decimals);
+            }
+            return uint256(price);
         }
         return 0;
     }
@@ -127,11 +144,18 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
      * @param usdAmount_ amount in USD for query.
      * @return the price of token in ether
      */
-    function _getUSD2Jamon(uint256 usdAmount_) internal view returns (uint256) {
+    function _getUSD2Jamon(uint256 usdAmount_) public view returns (uint256) {
+        address token0 = JamonUSDCV2LP.token0();
         (uint256 Res0, uint256 Res1, ) = JamonUSDCV2LP.getReserves();
-
-        uint256 res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
-        return ((usdAmount_ * Res1) / res0); // return amount of token0 needed to buy token1
+        uint256 price;
+        if (USDC == token0) {
+            Res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((usdAmount_ * Res1) / Res0);
+        } else {
+            Res1 = Res1 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((usdAmount_ * Res0) / Res1);
+        }
+        return price; // return amount of token0 needed to buy token1
     }
 
     /**
@@ -139,15 +163,18 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
      * @param jamonAmount_ amount in JamonV2 for query.
      * @return the price of token in ether
      */
-    function _getJamon2USD(uint256 jamonAmount_)
-        internal
-        view
-        returns (uint256)
-    {
+    function _getJamon2USD(uint256 jamonAmount_) public view returns (uint256) {
+        address token0 = JamonUSDCV2LP.token0();
         (uint256 Res0, uint256 Res1, ) = JamonUSDCV2LP.getReserves();
-
-        uint256 res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
-        return ((jamonAmount_ * res0) / Res1); // return amount of token0 needed to buy token1
+        uint256 price;
+        if (USDC == token0) {
+            Res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((jamonAmount_ * Res0) / Res1);
+        } else {
+            Res1 = Res1 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((jamonAmount_ * Res1) / Res0);
+        }
+        return price; // return amount of token0 needed to buy token1
     }
 
     /**
@@ -171,6 +198,48 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
     }
 
     //----------- External Functions -----------//
+
+    function bonusInfo(bytes32 bonusId_)
+        external
+        view
+        returns (
+            address lpAddress,
+            address feedToken,
+            uint256 startBlock,
+            uint256 endBlock,
+            uint256 collected,
+            uint256 hardcap,
+            uint256 rate
+        )
+    {
+        Proposal storage p = BONUS[bonusId_];
+        return (
+            p.lpAddress,
+            p.feedToken,
+            p.startBlock,
+            p.endBlock,
+            p.collected,
+            p.hardcap,
+            p.rate
+        );
+    }
+
+    /**
+     * @notice Show the contribution data by wallet.
+     * @param bonusId_ The id of the bonus in bytes32.
+     * @param wallet_ The wallet address to query.
+     * @return amount The amount contributed by wallet.
+     * @return reward The reward earned by wallet.
+     */
+    function walletInfo(bytes32 bonusId_, address wallet_)
+        external
+        view
+        returns (uint256 amount, uint256 reward)
+    {
+        Proposal storage p = BONUS[bonusId_];
+        return (p.holders[wallet_].amount, p.holders[wallet_].reward);
+    }
+
     /**
      * @notice Calculate the remaining amount on sale of the bonus.
      * @param bonusId_ The id of the bonus in bytes32.
@@ -229,7 +298,7 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
     function isBonusOpen(bytes32 bonus_) public view returns (bool) {
         Proposal storage p = BONUS[bonus_];
         if (p.startBlock < block.number && p.endBlock > block.number) {
-            return p.collected < p.hardcap;
+            return remaining4Sale(bonus_) > 0;
         }
         return false;
     }
@@ -249,24 +318,42 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
         require(isBonusOpen(bonusId_), "Not open");
         uint256 allowed = remaining4Sale(bonusId_);
         uint256 amount = amount_ > allowed ? allowed : amount_;
+        require(amount > 0, "Amount not allowed");
         Proposal storage p = BONUS[bonusId_];
         address LP = p.lpAddress;
         address feedToken = p.feedToken;
         uint256 totalSupply = IERC20(LP).totalSupply();
         uint256 totalFeedToken = IERC20(feedToken).balanceOf(LP);
+        uint256 feedDecimals = IERC20Metadata(feedToken).decimals();
+        require(
+            feedDecimals > 0 && totalSupply > 0 && totalFeedToken > 0,
+            "Balances error"
+        );
+        feedDecimals = feedDecimals < 18
+            ? uint256(18).sub(feedDecimals)
+            : feedDecimals;
+        if (feedDecimals != 18) {
+            totalFeedToken = totalFeedToken.mul(10**feedDecimals);
+        }
+        totalFeedToken = totalFeedToken.mul(2);
         uint256 percentage = amount.mul(10e18).div(totalSupply);
-        uint256 contributed = totalFeedToken.mul(percentage).div(10e18);
-        uint256 amountUSD = contributed.mul(2).div(_getTokenPrice(feedToken));
+        uint256 contributed = percentage.mul(totalFeedToken).div(10e18);
+        uint256 amountUSD = contributed.mul(_getTokenPrice(feedToken)).div(
+            1e18
+        );
         uint256 JamonReward = _getUSD2Jamon(amountUSD).mul(p.rate).div(100);
+        require(JamonReward > 0, "Zero reward");
         _doTransfers(LP, _msgSender(), amount);
         p.collected += amountUSD;
+        p.holders[_msgSender()].amount += amount;
+        p.holders[_msgSender()].reward += JamonReward;
         Vesting.createVestingSchedule(_msgSender(), JamonReward);
         emit Contributed(bonusId_, _msgSender(), LP, amount, JamonReward);
     }
 
     /**
      * @notice Creates a new bonus.
-     * @param lpAddress_ address of lp token acepted.
+     * @param lpAddress_ address of lp token accepted.
      * @param feedToken_ address of the token that will be used to query the price.
      * @param startBlock_ uint256 of the block in which the contribution will start.
      * @param endBlock_ uint256 of the block in which the contribution ends.
@@ -280,15 +367,30 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
         uint256 endBlock_,
         uint256 hardcap_,
         uint256 rate_
-    ) external onlyOwner {
-        require(lpAddress_ != address(0));
-        require(isValidBase(feedToken_));
-        require(startBlock_ > block.number && endBlock_ > startBlock_);
-        require(rate_ >= 120 && rate_ <= 180);
+    ) external onlyOwner returns (bytes32) {
+        require(
+            lpAddress_ != address(0) && feedToken_ != address(0x0),
+            "Invalid address"
+        );
+        require(isValidBase(feedToken_), "Invalid feed token");
+        require(
+            startBlock_ > block.number && endBlock_ > startBlock_,
+            "Blocks invalids"
+        );
+        require(rate_ >= 120 && rate_ <= 180, "Invalid rate");
         IJamonPair pair = IJamonPair(lpAddress_);
-        require(pair.token0() == feedToken_ || pair.token1() == feedToken_);
+        require(
+            pair.token0() == feedToken_ || pair.token1() == feedToken_,
+            "Feed not on pair"
+        );
         bytes32 bonusId = keccak256(
-            abi.encodePacked(lpAddress_, startBlock_, endBlock_, hardcap_)
+            abi.encodePacked(
+                lpAddress_,
+                startBlock_,
+                endBlock_,
+                hardcap_,
+                block.timestamp
+            )
         );
         Proposal storage p = BONUS[bonusId];
         p.lpAddress = lpAddress_;
@@ -296,6 +398,10 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
         p.startBlock = startBlock_;
         p.endBlock = endBlock_;
         p.hardcap = hardcap_;
+        p.rate = rate_;
+        BonusMap.add(bonusId);
+        emit NewBonus(lpAddress_, bonusId);
+        return bonusId;
     }
 
     /**
@@ -309,11 +415,14 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
         address proxy_,
         uint256 decimals_
     ) external onlyOwner {
-        require(token_ != address(0) && proxy_ != address(0) && decimals_ > 0);
-        require(!isValidBase(token_));
+        require(
+            token_ != address(0) && proxy_ != address(0),
+            "Invalid address"
+        );
+        require(decimals_ <= 18 && decimals_ > 0, "Invalid decimals");
         FEEDS[token_].proxy = proxy_;
         FEEDS[token_].decimals = decimals_;
-        PriceFeeds.add(token_);
+        require(PriceFeeds.add(token_), "Add feed error");
     }
 
     /**
@@ -321,8 +430,18 @@ contract Bonus is ReentrancyGuard, Pausable, Ownable {
      * @param token_ address of token for query.
      */
     function addStableCoin(address token_) external onlyOwner {
-        require(token_ != address(0));
-        StableCoins.add(token_);
+        require(token_ != address(0), "Invalid address");
+        require(StableCoins.add(token_), "Add token error");
+    }
+
+    /**
+     * @notice Remove bonus.
+     * @param bonusId_ id of the bonus.
+     */
+    function removeBonus(bytes32 bonusId_) external onlyOwner {
+        require(BonusMap.contains(bonusId_), "Invalid ID");
+        require(!isBonusOpen(bonusId_), "Bonus is open");
+        delete BONUS[bonusId_];
     }
 
     /**

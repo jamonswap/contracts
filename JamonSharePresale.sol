@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
@@ -42,11 +42,10 @@ contract JamonSharePresale is
 
     //---------- Variables ----------//
     EnumerableSet.AddressSet private WhitelistLP; // List of wallets allowed for this pre-sale.
-    uint256 public constant max4list = 1700 ether; // 1700 USD per user in whitelist.
+    uint256 public constant max4list = 1400 ether; // 1400 USD per user in whitelist. 
     address private Governor; // Address of Governor contract for send a liquidity.
     bool public listActive; // If the whitelist is active.
-    bool public listLimit; // If whitelist have a linmit.
-    uint256 private roundHardcap; // The maximum amount per round allowed in USD.
+    uint256 private constant roundHardcap = 350000 ether; // The maximum amount per round allowed in USD.
 
     //---------- Storage -----------//
     struct TokensContracts {
@@ -70,8 +69,10 @@ contract JamonSharePresale is
     }
 
     TokensContracts internal CONTRACTS; // Struct of the contracts necessary for the operation
-    Round[3] internal ROUNDS; // Array of 3 rounds.
-    mapping(address => uint256) public Max4Wallet; // Maximum quantity allowed for pre-sale blocking Jamon V2.
+    Round[3] public ROUNDS; // Array of 3 rounds.
+    mapping(address => uint256) public Max4Wallet; // Maximum quantity allowed for pre-sale blocking JamonV2.
+    mapping(address => uint256) public Spended; // Amount contributed by wallet for the limit of round 1
+    mapping(address => uint256) public JamonSpended; // Amount contributed by wallet for the limit of JamonV2 blocking  
 
     //---------- Events -----------//
     event Contributed(
@@ -82,19 +83,20 @@ contract JamonSharePresale is
     );
 
     //---------- Constructor ----------//
-    constructor(address jamon_) {
+    constructor(address jamon_, address conversor_) {
         /**
-         * Network: Mumbai
+         * Network: Polygon
          ------------------------------
          * Aggregator: MATIC/USD
-         * Address: 0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada
+         * Address: 0xAB594600376Ec9fD91F8e885dADF0CE036862dE0
          * Decimals: 8
          */
         maticFeed = AggregatorV3Interface(
-            0xd0D5e3DB44DE05E9F294BB0a3bEEaF030DE24Ada
+            0xAB594600376Ec9fD91F8e885dADF0CE036862dE0
         );
         CONTRACTS.JAMON_V2 = IERC20MintBurn(jamon_);
-        roundHardcap = 350000 ether;
+        Conversor = IConversor(conversor_);
+        listActive = true;
     }
 
     function initialize(
@@ -116,9 +118,9 @@ contract JamonSharePresale is
         RewardVesting = IJamonShareVesting(rewardVesting_);
         Governor = governor_;
         uint256 startAt = Conversor.endTime();
-        ROUNDS[0].endTime = startAt.add(10 days);
-        ROUNDS[1].endTime = startAt.add(20 days);
-        ROUNDS[2].endTime = startAt.add(30 days);
+        ROUNDS[0].endTime = startAt.add(10 days); 
+        ROUNDS[1].endTime = startAt.add(20 days); 
+        ROUNDS[2].endTime = startAt.add(30 days); 
     }
 
     //----------- Internal Functions -----------//
@@ -129,17 +131,24 @@ contract JamonSharePresale is
      */
     function _getUSD2Jamon(uint256 usdAmount_) internal view returns (uint256) {
         IJamonPair pair = IJamonPair(CONTRACTS.USDC_LP);
+        address token0 = pair.token0();
         (uint256 Res0, uint256 Res1, ) = pair.getReserves();
-
-        uint256 res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
-        return ((usdAmount_ * Res1) / res0); // return amount of token0 needed to buy token1
+        uint256 price;
+        if (address(CONTRACTS.USDC) == token0) {
+            Res0 = Res0 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((usdAmount_ * Res1) / Res0);
+        } else {
+            Res1 = Res1 * (1e12); // USDC 6 decimals, 6 + 12
+            price = ((usdAmount_ * Res0) / Res1);
+        }
+        return price; // return amount of token0 needed to buy token1
     }
 
     /**
      * @dev Take the price of MATIC compared to USD.
      * @return the price of MATIC in ether.
      */
-    function _getMaticPrice() public view returns (uint256) {
+    function _getMaticPrice() internal view returns (uint256) {
         (, int256 price, , , ) = maticFeed.latestRoundData();
         return uint256(price * 1e10); // Return price with 18 decimals, 8 + 10.
     }
@@ -154,6 +163,32 @@ contract JamonSharePresale is
     }
 
     /**
+     * @dev Check when the presale ends.
+     * @return The date in completion timestamp.
+     */
+    function endsJamonAt() public view returns (uint256) {
+        return ROUNDS[2].endTime.add(1 days); 
+    }
+
+    /**
+     * @dev Check when if limit in whitelist is actived.
+     * @return If limit is active or not.
+     */
+    function listLimit() public view returns (bool) {
+        return Conversor.endTime().add(600) > block.timestamp;
+    }
+
+    /**
+     * @dev Check if a wallet is whitelisted.
+     * @param wallet_ Address to check.
+     * @return Whether it's on the list or not.
+     */
+    function isOnWhitelist(address wallet_) external view returns (bool) {
+        /******************************************** */
+        return WhitelistLP.contains(wallet_);
+    }
+
+    /**
      * @dev Check pre sale status.
      * @return round the current round.
      * @return rate the current rate.
@@ -164,18 +199,9 @@ contract JamonSharePresale is
         override
         returns (uint256 round, uint256 rate)
     {
-        if (
-            ROUNDS[0].collected >= roundHardcap ||
-            ROUNDS[0].endTime < block.timestamp
-        ) {
-            if (
-                ROUNDS[1].collected >= roundHardcap ||
-                ROUNDS[1].endTime < block.timestamp
-            ) {
-                if (
-                    ROUNDS[2].collected >= roundHardcap ||
-                    ROUNDS[2].endTime < block.timestamp
-                ) {
+        if (ROUNDS[0].endTime < block.timestamp) {
+            if (ROUNDS[1].endTime < block.timestamp) {
+                if (ROUNDS[2].endTime < block.timestamp) {
                     return (4, 0);
                 }
                 return (3, 160);
@@ -194,15 +220,21 @@ contract JamonSharePresale is
      * @param round_ Round for query.
      * @return The amount of LP available to sale.
      */
-    function remaining4Sale(address lp_, uint256 round_)
-        public
-        view
-        returns (uint256)
-    {
+    function remaining4Sale(
+        address wallet_,
+        address lp_,
+        uint256 round_ ///********************************************************** */
+    ) public view returns (uint256) {
         uint256 remaining;
         uint256 available;
         if (round_ == 1) {
             available = roundHardcap.sub(ROUNDS[0].collected);
+            if (listLimit()) {
+                uint256 userRemaining = max4list.sub(Spended[wallet_]);
+                available = userRemaining > available
+                    ? available
+                    : userRemaining;
+            }
         }
         if (round_ == 2) {
             available = roundHardcap.sub(ROUNDS[1].collected);
@@ -237,7 +269,6 @@ contract JamonSharePresale is
         return remaining;
     }
 
-    
     /**
      * @notice Calculate the reward to receive based on the contributed MATIC/JAMONV2 lp tokens.
      * @param amount_ Amount of the LP token to query.
@@ -311,21 +342,24 @@ contract JamonSharePresale is
                 amount_,
             "LP not allowed"
         );
-        uint256 allowed = remaining4Sale(address(CONTRACTS.MATIC_LP), round);
-        uint256 limitAmount = listLimit && amount_ > max4list
-            ? max4list
-            : amount_;
-        uint256 amount = limitAmount > allowed ? allowed : limitAmount;
+        uint256 allowed = remaining4Sale(
+            _msgSender(),
+            address(CONTRACTS.MATIC_LP),
+            round
+        );
+        uint256 amount = amount_ > allowed ? allowed : amount_;
         (uint256 contributed, uint256 reward) = getRewardMaticLP(amount);
         reward = reward.mul(rate).div(100);
         require(reward >= 600, "Reward too low");
         require(
-            CONTRACTS.MATIC_LP.transferFrom(_msgSender(), Governor, amount)
+            CONTRACTS.MATIC_LP.transferFrom(_msgSender(), Governor, amount),
+            "Transfer LP error"
         );
         uint256 rewardMonth = reward.div(12);
         uint256 JSnow = rewardMonth.div(50);
         uint256 JSend = contributed.sub(JSnow);
         ROUNDS[round.sub(1)].collected += contributed;
+        Spended[_msgSender()] += contributed; 
         RewardVesting.createVesting(_msgSender(), JSnow, JSend);
         emit Contributed(
             address(CONTRACTS.MATIC_LP),
@@ -363,19 +397,24 @@ contract JamonSharePresale is
             CONTRACTS.USDC_LP.allowance(_msgSender(), address(this)) >= amount_,
             "LP not allowed"
         );
-        uint256 allowed = remaining4Sale(address(CONTRACTS.USDC_LP), round);
-        uint256 limitAmount = listLimit && amount_ > max4list
-            ? max4list
-            : amount_;
-        uint256 amount = limitAmount > allowed ? allowed : limitAmount;
+        uint256 allowed = remaining4Sale(
+            _msgSender(),
+            address(CONTRACTS.USDC_LP),
+            round
+        );
+        uint256 amount = amount_ > allowed ? allowed : amount_;
         (uint256 contributed, uint256 reward) = getRewardUSDCLP(amount);
         reward = reward.mul(rate).div(100);
         require(reward >= 600, "Reward too low");
-        require(CONTRACTS.USDC_LP.transferFrom(_msgSender(), Governor, amount));
+        require(
+            CONTRACTS.USDC_LP.transferFrom(_msgSender(), Governor, amount),
+            "Transfer LP error"
+        );
         uint256 rewardMonth = reward.div(12);
         uint256 JSnow = rewardMonth.div(50);
         uint256 JSend = contributed.sub(JSnow);
         ROUNDS[round.sub(1)].collected += contributed;
+        Spended[_msgSender()] += contributed; 
         RewardVesting.createVesting(_msgSender(), JSnow, JSend);
         emit Contributed(
             address(CONTRACTS.USDC_LP),
@@ -405,8 +444,11 @@ contract JamonSharePresale is
     {
         require(amount_ > 0, "Invalid amount");
         (uint256 round, ) = status();
-        require(round == 4, "LP Rounds not ended");
-        require(Max4Wallet[_msgSender()] >= amount_, "Amount not allowed");
+        require(round == 4 && endsJamonAt() > block.timestamp, "Lock not live");
+        require(
+            Max4Wallet[_msgSender()].sub(JamonSpended[_msgSender()]) >= amount_,
+            "Amount not allowed"
+        );
         require(
             CONTRACTS.JAMON_V2.allowance(_msgSender(), address(this)) >=
                 amount_,
@@ -419,6 +461,7 @@ contract JamonSharePresale is
         uint256 rewardMonth = reward.div(12);
         uint256 JSnow = rewardMonth.div(50);
         uint256 JSend = contributed.sub(JSnow);
+        JamonSpended[_msgSender()] += amount_; 
         CONTRACTS.JAMON_V2.burnFrom(_msgSender(), amount_);
         RewardVesting.createVesting(_msgSender(), JSnow, JSend);
         emit Contributed(

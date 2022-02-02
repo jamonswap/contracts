@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -26,11 +26,12 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
     //---------- Variables ----------//
     Counters.Counter public totalHolders; // Total wallets in stake.
     EnumerableSet.AddressSet internal validTokens; // Address map of valid tokens.
-    uint256 constant month = 2629743; // 1 Month Timestamp 2629743
+    uint256 constant month = 2629743; // 1 Month Timestamp.
+    address public Governor; // Addres of Governor contract. 
     uint256 private lastBlock; // Last block number processed for fixed apy.
     uint256 public totalStaked; // Total balance in stake.
     uint256 public lastUpdated; // Date in timestamp of the last balances update.
-    uint256 public percentBlock; // Percentage with respect to the amount staked to be mined per block.
+    uint256 private percentBlock; // Percentage with respect to the amount staked to be mined per block.
     bool public apyActived; // If fixed apy is active or not.
 
     //---------- Storage -----------//
@@ -57,11 +58,13 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
     event Withdrawn(address indexed payee, uint256 amount);
     event Staked(address indexed wallet, uint256 amount);
     event UnStaked(address indexed wallet, uint256 amount);
+    event ApyUpdated(uint256 apy, bool active);
 
     //---------- Constructor ----------//
-    constructor(address jamonV2_) {
+    constructor(address jamonV2_, address governor_) {
         JamonV2 = IERC20MintBurn(jamonV2_);
         validTokens.add(jamonV2_);
+        Governor = governor_;
         lastBlock = block.number;
         percentBlock = 32; // Anual Apy 5% = 0.00000032% per block
         apyActived = true;
@@ -81,7 +84,7 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
     ) external nonReentrant {
         require(amount_ > 0, "Tokens too low");
         require(validTokens.contains(token_), "Invalid token");
-        require(IERC20(token_).transferFrom(from_, address(this), amount_));
+        require(IERC20(token_).transferFrom(from_, address(this), amount_), "Transfer error");
         _disburseToken(token_, amount_);
     }
 
@@ -395,16 +398,16 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
      * @param amount_ Amount of tokens to deposit.
      */
     function stake(uint256 amount_) external whenNotPaused nonReentrant {
-        require(amount_ > 1000000);
+        require(amount_ > 1000000, "Amount too low");
         require(
             JamonV2.allowance(_msgSender(), address(this)) >= amount_,
             "Amount not allowed"
         );
 
         if (stakeHolders[_msgSender()].inStake) {
-            require(_addStake(_msgSender(), amount_));
+            require(_addStake(_msgSender(), amount_), "Add stake error");
         } else {
-            require(_initStake(_msgSender(), amount_));
+            require(_initStake(_msgSender(), amount_), "Init stake error");
         }
         emit Staked(_msgSender(), amount_);
     }
@@ -437,13 +440,13 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
         uint256 balance = _unStakeBal(_msgSender());
         uint256 balanceDiff = stakedBal.sub(balance);
         if (balance > 0) {
-            require(JamonV2.transfer(_msgSender(), balance));
+            require(JamonV2.transfer(_msgSender(), balance), "Transfer error");
         }
         totalStaked = totalStaked.sub(stakedBal);
         delete stakeHolders[_msgSender()];
         totalHolders.decrement();
         if (balanceDiff > 0) {
-            _disburseToken(address(JamonV2), balanceDiff);
+            require(JamonV2.transfer(Governor, balanceDiff), "Transfer error"); 
         }
         emit UnStaked(_msgSender(), balance);
     }
@@ -455,7 +458,7 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
         require(stakeHolders[_msgSender()].inStake, "Not in stake");
         uint256 stakedBal = stakeHolders[_msgSender()].stakedBal;
         delete stakeHolders[_msgSender()];
-        require(JamonV2.transfer(_msgSender(), stakedBal));
+        require(JamonV2.transfer(_msgSender(), stakedBal), "Transfer error");
         totalStaked = totalStaked.sub(stakedBal);
         totalHolders.decrement();
     }
@@ -486,7 +489,7 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
      * @param add_ boolean to enable or disable the token.
      */
     function setTokenList(address token_, bool add_) external onlyOwner {
-        require(token_ != address(0) && token_ != address(JamonV2));
+        require(token_ != address(0) && token_ != address(JamonV2), "Invalid address");
         if (add_) {
             validTokens.add(token_);
         } else {
@@ -500,9 +503,10 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
      * @param active_ boolean to enable or disable fixed apy. 
      */
     function setApy(uint256 percent_, bool active_) external onlyOwner {
-        require(percent_ > 0 && percent_ < 640);
+        require(percent_ > 0 && percent_ < 640, "Invalid percent");
         percentBlock = percent_;
         apyActived = active_;
+        emit ApyUpdated(percent_, active_);
     }
 
     /**

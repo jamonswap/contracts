@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -25,12 +25,14 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
     using SafeERC20 for IJamonPair;
 
     //---------- Contracts ----------//
-    IJamonRouter internal Router;  // DEX Router contract
+    IJamonRouter internal Router; // DEX Router contract
     IJamonSharePresale internal Presale; // JamonShare presale contract
 
     //---------- Variables ----------//
     uint256 private immutable _endTime; // Value in timestamp of the liquidity conversion end date
     bool public Completed_LP; // If the liquidity is completed
+    bool public Canceled; // If the conversion
+    uint256 public startAt;
 
     //---------- Storage -----------//
     struct TokensContracts {
@@ -88,7 +90,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
         address usdc_
     ) {
         Router = IJamonRouter(0xdBe30E8742fBc44499EB31A19814429CECeFFaA0);
-        _endTime = block.timestamp.add(259200); // 3 days update lps period
+        startAt = 1643911200; // Thu Feb 03 2022 18:00:00 GMT+0000
+        _endTime = startAt.add(3 days); // 3 days update lps period
         Contracts.JAMON_V1 = IERC20(oldToken_);
         Contracts.JAMON_V2 = IERC20MintBurn(newToken_);
         Contracts.USDC = IERC20(usdc_);
@@ -119,7 +122,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
     modifier onlyTokens(address token_) {
         require(
             token_ == address(Contracts.MATIC_LP_V1) ||
-                token_ == address(Contracts.USDC_LP_V1)
+                token_ == address(Contracts.USDC_LP_V1),
+            "Invalid token"
         );
         _;
     }
@@ -136,7 +140,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
         uint256 balance_,
         uint256 oldTotal_,
         uint256 newTotal_
-    ) internal pure returns (uint256) {
+    ) public pure returns (uint256) {
+        //******************************************** */
         uint256 oldPercent = balance_.mul(10e18).div(oldTotal_);
         uint256 newBalance = oldPercent.mul(newTotal_).div(10e18);
         return newBalance;
@@ -163,7 +168,10 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
         onlyTokens(token_)
     {
         require(amount_ > 0, "Invalid amount");
-        require(block.timestamp < _endTime, "Initial period ended");
+        require(
+            block.timestamp < _endTime && block.timestamp > startAt,
+            "Out of time"
+        ); //************************************* */
         IERC20(token_).safeTransferFrom(_msgSender(), address(this), amount_);
         Wallet storage w = Wallets[_msgSender()];
         if (token_ == address(Contracts.MATIC_LP_V1)) {
@@ -184,7 +192,7 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
     function update(uint256 amount_) external whenNotPaused nonReentrant {
         require(amount_ > 0, "Invalid amount");
         (uint256 round, ) = Presale.status();
-        require(round == 4, "Presale not ended");
+        require(round == 4 && Completed_LP, "Presale not ended");
         Contracts.JAMON_V1.safeTransferFrom(
             _msgSender(),
             0x000000000000000000000000000000000000dEaD,
@@ -229,10 +237,37 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @notice Allows you to claim the old liquidity provided if conversion is canceled.
+     */
+    function safeWithdrawn() external nonReentrant {
+        require(!Completed_LP && Canceled, "Not canceled");
+        Wallet storage w = Wallets[_msgSender()];
+        require(w.MaticLpBalance > 0 || w.USDCLpBalance > 0, "Zero balance");
+        uint256 MaticLpBalance = w.MaticLpBalance;
+        uint256 USDCLpBalance = w.USDCLpBalance;
+        uint256[2] memory amounts;
+        if (MaticLpBalance > 0) {
+            w.MaticLpBalance = 0;
+            Contracts.MATIC_LP_V1.transfer(_msgSender(), MaticLpBalance);
+            amounts[0] = MaticLpBalance;
+        }
+        if (USDCLpBalance > 0) {
+            w.USDCLpBalance = 0;
+            Contracts.USDC_LP_V1.transfer(_msgSender(), USDCLpBalance);
+            amounts[1] = USDCLpBalance;
+        }
+        delete Wallets[_msgSender()];
+        emit ClaimedLP(_msgSender(), amounts);
+    }
+
+    /**
      * @notice Complete the liquidity conversion phase, undo the old liquidity to create new liquidity with the obtained tokens.
      */
     function completeLP() external onlyOwner {
-        require(!Completed_LP && block.timestamp > _endTime);
+        require(
+            !Completed_LP && block.timestamp > _endTime && !Canceled,
+            "Already completed or cancelled"
+        );
         uint256 oldMaticLpBalance = Contracts.MATIC_LP_V1.balanceOf(
             address(this)
         );
@@ -240,40 +275,45 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
             address(this)
         );
         if (oldMaticLpBalance > 0) {
+            Contracts.MATIC_LP_V1.approve(address(Router), oldMaticLpBalance);
             (uint256 TokenA, uint256 TokenB) = Router.removeLiquidity(
-                Router.WETH(),
+                address(Router.WETH()),
                 address(Contracts.JAMON_V1),
                 oldMaticLpBalance,
                 0,
                 0,
                 address(this),
-                block.timestamp.add(60)
+                block.timestamp.add(120)
             );
+            require(TokenA > 0 && TokenB > 0, "Matic LP remove zero");
             IERC20(Router.WETH()).approve(address(Router), TokenA);
             Contracts.JAMON_V2.mint(address(this), TokenB);
             Contracts.JAMON_V2.approve(address(Router), TokenB);
             (, , uint256 liquidity) = Router.addLiquidity(
-                Router.WETH(),
+                address(Router.WETH()),
                 address(Contracts.JAMON_V2),
                 TokenA,
                 TokenB,
                 0,
                 0,
                 address(this),
-                block.timestamp.add(60)
+                block.timestamp.add(120)
             );
+            require(liquidity > 0, "Matic LP liquidity zero");
             Balances.TotalNewMaticLP = liquidity;
         }
         if (oldUsdcLpBalance > 0) {
+            Contracts.USDC_LP_V1.approve(address(Router), oldUsdcLpBalance);
             (uint256 TokenA, uint256 TokenB) = Router.removeLiquidity(
                 address(Contracts.USDC),
                 address(Contracts.JAMON_V1),
-                oldMaticLpBalance,
+                oldUsdcLpBalance,
                 0,
                 0,
                 address(this),
-                block.timestamp.add(60)
+                block.timestamp.add(120)
             );
+            require(TokenA > 0 && TokenB > 0, "USDC LP remove zero");
             Contracts.USDC.approve(address(Router), TokenA);
             Contracts.JAMON_V2.mint(address(this), TokenB);
             Contracts.JAMON_V2.approve(address(Router), TokenB);
@@ -285,11 +325,20 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
                 0,
                 0,
                 address(this),
-                block.timestamp.add(60)
+                block.timestamp.add(120)
             );
+            require(liquidity > 0, "USDC LP liquidity zero");
             Balances.TotalNewUsdcLP = liquidity;
         }
         Completed_LP = true;
+    }
+
+    /**
+     * @notice Allow to cancel de conversion if add liquidity fails.
+     */
+    function cancelConversion() external onlyOwner {
+        require(!Completed_LP, "Conversion completed");
+        Canceled = true;
     }
 
     /**

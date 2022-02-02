@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -26,7 +26,8 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
     Counters.Counter public totalHolders; // Total wallets in stake.
     EnumerableSet.AddressSet internal validTokens; // Address map of valid tokens.
     address private JamonV2; // Address of JamonV2 contract.
-    uint256 constant month = 2629743; // 1 Month Timestamp 2629743
+    address public Governor; // Addres of Governor contract.
+    uint256 constant month = 2629743; // 1 Month Timestamp.
     uint256 public totalStaked; // Total balance in stake.
     uint256 public lastUpdated; // Date in timestamp of the last balances update.
 
@@ -56,9 +57,14 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
     event UnStaked(address indexed wallet, uint256 amount);
 
     //---------- Constructor ----------//
-    constructor(address jamonShare_, address jamonV2_) {
+    constructor(
+        address jamonShare_,
+        address jamonV2_,
+        address governor_
+    ) {
         JamonShare = IERC20(jamonShare_);
         JamonV2 = jamonV2_;
+        Governor = governor_;
         validTokens.add(jamonShare_);
         validTokens.add(jamonV2_);
     }
@@ -77,7 +83,10 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
     ) external nonReentrant {
         require(amount_ > 0, "Tokens too low");
         require(validTokens.contains(token_), "Invalid token");
-        require(IERC20(token_).transferFrom(from_, address(this), amount_));
+        require(
+            IERC20(token_).transferFrom(from_, address(this), amount_),
+            "Transfer tokens error"
+        );
         _disburseToken(token_, amount_);
     }
 
@@ -349,7 +358,7 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
 
     /**
      * @notice Check if you have rewards for claiming or not.
-     * @return If have reawrds.
+     * @return If have rewards.
      */
     function pendingBalances() public view returns (bool) {
         uint256 tokensCount = validTokens.length();
@@ -376,16 +385,16 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
      * @param amount_ Amount of tokens to deposit.
      */
     function stake(uint256 amount_) external whenNotPaused nonReentrant {
-        require(amount_ > 1000000);
+        require(amount_ > 1000000, "Amount too low");
         require(
             JamonShare.allowance(_msgSender(), address(this)) >= amount_,
             "Amount not allowed"
         );
 
         if (stakeHolders[_msgSender()].inStake) {
-            require(_addStake(_msgSender(), amount_));
+            require(_addStake(_msgSender(), amount_), "Add stake error");
         } else {
-            require(_initStake(_msgSender(), amount_));
+            require(_initStake(_msgSender(), amount_), "Init stake error");
         }
         emit Staked(_msgSender(), amount_);
     }
@@ -418,13 +427,19 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
         uint256 balance = _unStakeBal(_msgSender());
         uint256 balanceDiff = stakedBal.sub(balance);
         if (balance > 0) {
-            require(JamonShare.transfer(_msgSender(), balance));
+            require(
+                JamonShare.transfer(_msgSender(), balance),
+                "Transfer error"
+            );
         }
         totalStaked = totalStaked.sub(stakedBal);
         delete stakeHolders[_msgSender()];
         totalHolders.decrement();
         if (balanceDiff > 0) {
-            _disburseToken(address(JamonShare), balanceDiff);
+            require(
+                JamonShare.transfer(Governor, balanceDiff),
+                "Transfer error"
+            ); 
         }
         emit UnStaked(_msgSender(), balance);
     }
@@ -436,7 +451,7 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
         require(stakeHolders[_msgSender()].inStake, "Not in stake");
         uint256 stakedBal = stakeHolders[_msgSender()].stakedBal;
         delete stakeHolders[_msgSender()];
-        require(JamonShare.transfer(_msgSender(), stakedBal));
+        require(JamonShare.transfer(_msgSender(), stakedBal), "Transfer error");
         totalStaked = totalStaked.sub(stakedBal);
         totalHolders.decrement();
     }
@@ -469,7 +484,8 @@ contract JamonShareVault is ReentrancyGuard, Pausable, Ownable {
         require(
             token_ != address(0) &&
                 token_ != address(JamonShare) &&
-                token_ != JamonV2
+                token_ != JamonV2,
+            "Invalid token"
         );
         if (add_) {
             validTokens.add(token_);

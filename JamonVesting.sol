@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity =0.8.11;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -33,7 +33,7 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
 
     //---------- Variables ----------//
     uint256 private vestingSchedulesTotalAmount; // Total JamonV2 token vested
-    uint256 private constant month = 2629743; // 1 Month Timestamp
+    uint256 private constant month = 2629743 ; // 1 Month Timestamp.
     Counters.Counter private deposits; // Counter for a control of deposits, max 12 deposits one per month.
     uint256 public lastDeposit; // Last deposit in timestamp
 
@@ -62,9 +62,9 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
 
     //---------- Constructor ----------//
     constructor(address jamonv2_) {
-        require(jamonv2_ != address(0x0));
+        require(jamonv2_ != address(0x0), "Invalid address");
         jamonV2 = IERC20MintBurn(jamonv2_);
-        lastDeposit = block.timestamp;
+        lastDeposit = block.timestamp.add(40 days); 
     }
 
     function initialize(address bonus_, address jsVault_) external onlyOwner {
@@ -82,7 +82,7 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
      * @dev Reverts if the vesting schedule does not exist.
      */
     modifier onlyIfVestingSchedule(bytes32 vestingScheduleId) {
-        require(vestingSchedules[vestingScheduleId].initialized == true);
+        require(vestingSchedules[vestingScheduleId].initialized == true, "Invalid Id");
         _;
     }
 
@@ -90,7 +90,7 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
      * @dev Reverts if the vesting schedule does not exist.
      */
     modifier onlyBonus() {
-        require(_msgSender() == bonus);
+        require(_msgSender() == bonus, "Forbidden address");
         _;
     }
 
@@ -335,8 +335,8 @@ contract JamonVesting is IJamonVesting, Ownable, ReentrancyGuard, Pausable {
     }
 
     function depositToVault() external nonReentrant whenNotPaused {
-        require(lastDeposit.add(month) < block.timestamp);
-        require(deposits.current() < 12);
+        require(lastDeposit.add(month) < block.timestamp, "Is soon");
+        require(deposits.current() < 12, "All deposits done");
         lastDeposit = block.timestamp;
         deposits.increment();
         uint256 totalStaked = JamonShareVault.totalStaked();
