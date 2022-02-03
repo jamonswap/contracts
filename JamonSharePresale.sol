@@ -283,7 +283,7 @@ contract JamonSharePresale is
         uint256 totalMatic = CONTRACTS.WMATIC.balanceOf(
             address(CONTRACTS.MATIC_LP)
         );
-        uint256 totalUSD = (totalMatic.mul(2).mul(_getMaticPrice())).div(1e18);
+        uint256 totalUSD = (totalMatic.mul(2).mul(_getMaticPrice())).div(10e18);
         uint256 percentage = amount_.mul(10e18).div(totalSupply);
         uint256 contributed = percentage.mul(totalUSD).div(10e18);
         uint256 amountJamon = _getUSD2Jamon(contributed);

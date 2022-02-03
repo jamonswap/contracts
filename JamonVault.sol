@@ -469,8 +469,8 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
     function updateBalances() external whenNotPaused nonReentrant {
         if (lastUpdated.add(1 days) < block.timestamp) {
             lastUpdated = block.timestamp;
-            _recalculateBalances();
             _updateApy();
+            _recalculateBalances();
         }
     }
 

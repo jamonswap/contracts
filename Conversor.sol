@@ -279,8 +279,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
                 address(Router.WETH()),
                 address(Contracts.JAMON_V1),
                 oldMaticLpBalance,
-                0,
-                0,
+                1,
+                1,
                 address(this),
                 block.timestamp.add(120)
             );
@@ -293,8 +293,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
                 address(Contracts.JAMON_V2),
                 TokenA,
                 TokenB,
-                0,
-                0,
+                1,
+                1,
                 address(this),
                 block.timestamp.add(120)
             );
@@ -307,8 +307,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
                 address(Contracts.USDC),
                 address(Contracts.JAMON_V1),
                 oldUsdcLpBalance,
-                0,
-                0,
+                1,
+                1,
                 address(this),
                 block.timestamp.add(120)
             );
@@ -321,8 +321,8 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
                 address(Contracts.JAMON_V2),
                 TokenA,
                 TokenB,
-                0,
-                0,
+                1,
+                1,
                 address(this),
                 block.timestamp.add(120)
             );
