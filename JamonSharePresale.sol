@@ -167,7 +167,7 @@ contract JamonSharePresale is
      * @return The date in completion timestamp.
      */
     function endsJamonAt() public view returns (uint256) {
-        return ROUNDS[2].endTime.add(1 days); 
+        return ROUNDS[2].endTime.add(10 days); 
     }
 
     /**
@@ -175,7 +175,7 @@ contract JamonSharePresale is
      * @return If limit is active or not.
      */
     function listLimit() public view returns (bool) {
-        return Conversor.endTime().add(600) > block.timestamp;
+        return Conversor.endTime().add(1 days) > block.timestamp;
     }
 
     /**
@@ -184,7 +184,6 @@ contract JamonSharePresale is
      * @return Whether it's on the list or not.
      */
     function isOnWhitelist(address wallet_) external view returns (bool) {
-        /******************************************** */
         return WhitelistLP.contains(wallet_);
     }
 
@@ -223,7 +222,7 @@ contract JamonSharePresale is
     function remaining4Sale(
         address wallet_,
         address lp_,
-        uint256 round_ ///********************************************************** */
+        uint256 round_ 
     ) public view returns (uint256) {
         uint256 remaining;
         uint256 available;

@@ -140,8 +140,7 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
         uint256 balance_,
         uint256 oldTotal_,
         uint256 newTotal_
-    ) public pure returns (uint256) {
-        //******************************************** */
+    ) internal pure returns (uint256) {
         uint256 oldPercent = balance_.mul(10e18).div(oldTotal_);
         uint256 newBalance = oldPercent.mul(newTotal_).div(10e18);
         return newBalance;
@@ -171,7 +170,7 @@ contract Conversor is IConversor, Ownable, ReentrancyGuard, Pausable {
         require(
             block.timestamp < _endTime && block.timestamp > startAt,
             "Out of time"
-        ); //************************************* */
+        );
         IERC20(token_).safeTransferFrom(_msgSender(), address(this), amount_);
         Wallet storage w = Wallets[_msgSender()];
         if (token_ == address(Contracts.MATIC_LP_V1)) {

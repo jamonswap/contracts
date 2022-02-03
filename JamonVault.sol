@@ -498,6 +498,18 @@ contract JamonVault is ReentrancyGuard, Pausable, Ownable {
     }
 
     /**
+     * @notice Get invalid tokens and send to Governor.
+     * @param token_ address of token to send.
+     */
+    function getInvalidTokens(address token_) external onlyOwner {
+        require(!validTokens.contains(token_),
+            "Invalid token"
+        );
+        uint256 balance = IERC20(token_).balanceOf(address(this));
+        IERC20(token_).transfer(Governor, balance);
+    }
+
+    /**
      * @notice Set the fixed apy and activate it.
      * @param percent_ percentage with respect to the total stake to be mined per block, with a maximum of 0.00000640% (100% APY).
      * @param active_ boolean to enable or disable fixed apy. 
